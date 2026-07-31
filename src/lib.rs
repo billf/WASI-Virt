@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use semver::Version;
 use serde::Deserialize;
 use virt_config::{create_config_virt, strip_config_virt};
@@ -30,18 +30,11 @@ pub use virt_config::{HostConfig, VirtConfig};
 pub use virt_env::{HostEnv, VirtEnv};
 pub use virt_io::{FsEntry, StdioCfg, VirtFs, VirtualFiles};
 
-const VIRT_ADAPTER_0_2_1: &[u8] = include_bytes!("../lib/virtual_adapter-wasi0_2_1.wasm");
-const VIRT_ADAPTER_DEBUG_0_2_1: &[u8] =
-    include_bytes!("../lib/virtual_adapter-wasi0_2_1.debug.wasm");
+pub const DEFAULT_INSERT_WASI_VERSION: Version = Version::new(0, 2, 12);
 
-const VIRT_ADAPTER_0_2_3: &[u8] = include_bytes!("../lib/virtual_adapter-wasi0_2_3.wasm");
-const VIRT_ADAPTER_DEBUG_0_2_3: &[u8] =
-    include_bytes!("../lib/virtual_adapter-wasi0_2_3.debug.wasm");
-
-const VIRT_WIT_METADATA_0_2_1: &[u8] = include_bytes!("../lib/package-wasi0_2_1.wasm");
-const VIRT_WIT_METADATA_0_2_3: &[u8] = include_bytes!("../lib/package-wasi0_2_3.wasm");
-
-pub const DEFAULT_INSERT_WASI_VERSION: Version = Version::new(0, 2, 3);
+const VIRT_ADAPTER_P2: &[u8] = include_bytes!("../lib/virtual_adapter-wasip2.wasm");
+const VIRT_ADAPTER_DEBUG_P2: &[u8] = include_bytes!("../lib/virtual_adapter-wasip2.debug.wasm");
+const VIRT_WIT_METADATA_P2: &[u8] = include_bytes!("../lib/package-wasip2.wasm");
 
 /// Parts of a WIT interface name
 ///
@@ -311,14 +304,22 @@ impl WasiVirt {
         let mut config = walrus::ModuleConfig::new();
         config.generate_name_section(self.debug);
 
-        let mut module = match (self.debug, insert_wasi_version.to_string().as_ref()) {
-            (_debug @ true, "0.2.1") => config.parse(VIRT_ADAPTER_DEBUG_0_2_1),
-            (_debug @ false, "0.2.1") => config.parse(VIRT_ADAPTER_0_2_1),
-            (_debug @ true, "0.2.3") => config.parse(VIRT_ADAPTER_DEBUG_0_2_3),
-            (_debug @ false, "0.2.3") => config.parse(VIRT_ADAPTER_0_2_3),
-            (_, v) => bail!("unsupported WASI version [{v}] (only 0.2.1 and 0.2.3 are supported)",),
-        }
-        .context("failed to parse adapter")?;
+        ensure!(
+            (insert_wasi_version.major, insert_wasi_version.minor) == (0, 2),
+            "unsupported WASI version {insert_wasi_version} requested; only 0.2.x is supported"
+        );
+
+        let metadata_component_bytes = VIRT_WIT_METADATA_P2;
+
+        let virt_adapter_bytes = if self.debug {
+            VIRT_ADAPTER_DEBUG_P2
+        } else {
+            VIRT_ADAPTER_P2
+        };
+
+        let mut module = config
+            .parse(virt_adapter_bytes)
+            .context("failed to parse adapter")?;
 
         module.name = Some("wasi_virt".into());
 
@@ -363,12 +364,6 @@ impl WasiVirt {
             .into_any()
             .downcast::<walrus::RawCustomSection>()
             .unwrap();
-
-        let metadata_component_bytes = match insert_wasi_version.to_string().as_str() {
-            "0.2.1" => VIRT_WIT_METADATA_0_2_1,
-            "0.2.3" => VIRT_WIT_METADATA_0_2_3,
-            v => bail!("unsupported WASI version [{v}] (only 0.2.1 and 0.2.3 are supported)"),
-        };
 
         let (mut resolve, pkg_id) = match wit_component::decode(metadata_component_bytes)
             .context("failed to decode WIT package")?

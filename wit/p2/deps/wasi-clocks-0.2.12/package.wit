@@ -1,17 +1,4 @@
-component = "file-read"
-
-host-fs-path = "wasi-clocks-0.2.12/package.wit"
-
-[virt-opts.stdio]
-stdin = "allow"
-stdout = "allow"
-stderr = "allow"
-
-[virt-opts.fs.preopens."/"]
-virtualize = "./wit/p2/deps"
-
-[expect]
-file-read = '''package wasi:clocks@0.2.12;
+package wasi:clocks@0.2.12;
 
 /// WASI Monotonic Clock is a clock API intended to let users measure elapsed
 /// time.
@@ -173,4 +160,3 @@ world imports {
   @unstable(feature = clocks-timezone)
   import timezone;
 }
-'''
